@@ -1,0 +1,8 @@
+version: "2"
+
+services:
+  api:
+    image: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/demo/api:latest
+    ports:
+      - 80:80
+    container_name: api

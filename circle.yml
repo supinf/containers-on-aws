@@ -1,0 +1,46 @@
+# CircleCI Environment Variables:
+#   - AWS_ACCOUNT_ID
+#   - AWS_ACCESS_KEY_ID
+#   - AWS_SECRET_ACCESS_KEY
+#   - AWS_REGION
+#   - AWS_S3_BUCKET
+#   - AWS_CODEDEPLOY_APPLICATION_NAME
+#   - AWS_CODEDEPLOY_DEPLOYMENT_GROUP
+
+general:
+  artifacts:
+    - docker
+
+machine:
+  environment:
+    AWS_S3_KEY: demo/$( echo ${CIRCLE_SHA1} | cut -c 1-7 )-${CIRCLE_BUILD_NUM}.tar.gz
+  services:
+    - docker
+
+dependencies:
+  pre:
+    - docker version
+    - docker info
+    - aws --version
+  override:
+    - docker build -f app-api/Dockerfile -t ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/demo/api:latest .
+
+test:
+  override:
+    - docker run -d -p 80:80 ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/demo/api:latest; sleep 10
+    - curl --retry 10 --retry-delay 5 -v http://localhost
+
+deployment:
+  staging:
+    branch: master
+    commands:
+      # Build docker images
+      - aws --region ${AWS_REGION} ecr get-login | sh
+      - docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/demo/api:latest
+      #
+      # Send contents to S3
+      - aws --region ${AWS_REGION} deploy push --application-name ${AWS_CODEDEPLOY_APPLICATION_NAME} --s3-location s3://${AWS_S3_BUCKET}/${AWS_S3_KEY} --source ./app-api
+      #
+      # Deploy with CodeDeploy
+      - aws --region ${AWS_REGION} s3api wait object-exists --bucket ${AWS_S3_BUCKET} --key ${AWS_S3_KEY}
+      - aws --region ${AWS_REGION} deploy create-deployment --application-name ${AWS_CODEDEPLOY_APPLICATION_NAME} --deployment-group-name ${AWS_CODEDEPLOY_DEPLOYMENT_GROUP} --deployment-config-name CodeDeployDefault.AllAtOnce --s3-location bucket=${AWS_S3_BUCKET},key=${AWS_S3_KEY},eTag=$( aws s3api head-object --bucket ${AWS_S3_BUCKET} --key ${AWS_S3_KEY} --query 'ETag' --output text | sed 's/^"\(.*\)"$/\1/' ),bundleType=zip --ignore-application-stop-failures

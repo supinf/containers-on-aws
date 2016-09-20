@@ -1,0 +1,215 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "JAWS-UG Container #6 - Demo (CodeDeploy)"
+Parameters:
+  ImageID:
+    Description: EC2 ImageID
+    Type: AWS::EC2::Image::Id
+    Default: ami-c9dc0fa8
+  KeyName: 
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the bastion host
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  CodeDeployTagKey:
+    Type: String
+    Default: CodeDeploy
+    Description: The tag name that is associated with EC2 instances on which CodeDeploy agent is installed
+  CodeDeployTagValue:
+    Type: String
+    Default: Demo
+    Description: The value associated with CodeDeployTagKey
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+  DeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    DependsOn: CodeDeployApplication
+    Properties:
+      ApplicationName:
+        Ref: CodeDeployApplication
+      Ec2TagFilters:
+        - Type: KEY_AND_VALUE
+          Key:
+            Ref: CodeDeployTagKey
+          Value:
+            Ref: CodeDeployTagValue
+      ServiceRoleArn:
+        Fn::GetAtt:
+          - CodeDeployServiceRole
+          - Arn
+  CodeDeployServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codedeploy.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+  CodeDeployInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+  CodeDeployInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - Ref: CodeDeployInstanceRole
+  CodeDeployExecutor:
+    Type: AWS::IAM::User
+    Properties:
+      Path: /
+      Policies:
+        - PolicyName: execute-codedeploy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:*"
+                Resource:
+                  Fn::Join:
+                    - ""
+                    - - "arn:aws:s3:::"
+                      - Ref: S3Bucket
+                      - "/*"
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource:
+                  - "*"
+              - Effect: Allow
+                Action:
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource:
+                  Fn::Join:
+                    - ""
+                    - - "arn:aws:ecr:"
+                      - Ref: AWS::Region
+                      - ":"
+                      - Ref: AWS::AccountId
+                      - ":repository/demo/*"
+              - Effect: Allow
+                Action:
+                  - codedeploy:RegisterApplicationRevision
+                  - codedeploy:GetApplicationRevision
+                Resource:
+                  Fn::Join:
+                    - ""
+                    - - "arn:aws:codedeploy:"
+                      - Ref: AWS::Region
+                      - ":"
+                      - Ref: AWS::AccountId
+                      - ":application:"
+                      - Ref: CodeDeployApplication
+              - Effect: Allow
+                Action:
+                  - codedeploy:CreateDeployment
+                  - codedeploy:GetDeployment
+                Resource:
+                  Fn::Join:
+                    - ""
+                    - - "arn:aws:codedeploy:"
+                      - Ref: AWS::Region
+                      - ":"
+                      - Ref: AWS::AccountId
+                      - ":deploymentgroup:"
+                      - Ref: CodeDeployApplication
+                      - "/*"
+              - Effect: Allow
+                Action:
+                  - codedeploy:GetDeploymentConfig
+                Resource:
+                  Fn::Join:
+                    - ""
+                    - - "arn:aws:codedeploy:"
+                      - Ref: AWS::Region
+                      - ":"
+                      - Ref: AWS::AccountId
+                      - ":deploymentconfig:*"
+  CodeDeployExecutorKey:
+    Type: AWS::IAM::AccessKey
+    Properties:
+      UserName:
+        Ref: CodeDeployExecutor
+  CodeDeployAutoScalingGroup: 
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties: 
+      VPCZoneIdentifier: 
+        - Fn::ImportValue: DemoPublicSubnet1a
+        - Fn::ImportValue: DemoPublicSubnet1c
+      LaunchConfigurationName: 
+        Ref: CodeDeployInstances
+      MinSize: 1
+      MaxSize: 1
+      DesiredCapacity: 1
+      MetricsCollection:
+        - Granularity: 1Minute
+      Tags:
+        - Key:
+            Ref: CodeDeployTagKey
+          Value:
+            Ref: CodeDeployTagValue
+          PropagateAtLaunch: true
+  CodeDeployInstances: 
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties: 
+      ImageId:
+        Ref: ImageID
+      InstanceType: g2.2xlarge
+      KeyName: 
+        Ref: KeyName
+      IamInstanceProfile:
+        Ref: CodeDeployInstanceProfile
+      AssociatePublicIpAddress: true
+      SecurityGroups: 
+        - Fn::ImportValue: DemoSecurityGroupEC2
+        - Fn::ImportValue: DemoSecurityGroupELB
+      SpotPrice: 0.5
+Outputs:
+  AccountID:
+    Value:
+      Ref: AWS::AccountId
+  Region:
+    Value:
+      Ref: AWS::Region
+  S3Bucket:
+    Value:
+      Ref: S3Bucket
+  Application:
+    Value:
+      Ref: CodeDeployApplication
+  DeploymentGroup:
+    Value:
+      Ref: DeploymentGroup
+  IamUserAccessKey:
+    Value:
+      Ref: CodeDeployExecutorKey
+  IamUserSecretKey:
+    Value:
+      Fn::GetAtt:
+        - CodeDeployExecutorKey
+        - SecretAccessKey

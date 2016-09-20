@@ -1,0 +1,14 @@
+version: 0.0
+os: linux
+files:
+  - source: docker-compose.yml
+    destination: /tmp
+hooks:
+  ApplicationStop:
+    - location: scripts/stop.sh
+      runas: ubuntu
+      timeout: 60
+  ApplicationStart:
+    - location: scripts/start.sh
+      runas: ubuntu
+      timeout: 60
