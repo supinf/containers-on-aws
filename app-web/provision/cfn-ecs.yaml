@@ -1,0 +1,146 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "JAWS-UG Container #6 - Demo (ECS)"
+Parameters:
+  ImageID:
+    Description: EC2 ImageID
+    Type: AWS::EC2::Image::Id
+    Default: ami-ed26e78c
+  KeyName: 
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the bastion host
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  InstanceType:
+    Description: The EC2 instance type
+    Type: String
+    Default: t2.small
+Resources:
+  DemoCluster:
+    Type: AWS::ECS::Cluster
+  ECSAutoScalingGroup: 
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties: 
+      VPCZoneIdentifier: 
+        - Fn::ImportValue: DemoPublicSubnet1a
+        - Fn::ImportValue: DemoPublicSubnet1c
+      LaunchConfigurationName: 
+        Ref: ContainerInstances
+      MinSize: 1
+      MaxSize: 1
+      DesiredCapacity: 1
+      MetricsCollection:
+        - Granularity: 1Minute
+      TargetGroupARNs:
+        - Ref: TargetGroup
+  ContainerInstances: 
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties: 
+      ImageId:
+        Ref: ImageID
+      InstanceType: 
+        Ref: InstanceType
+      KeyName: 
+        Ref: KeyName
+      IamInstanceProfile: 
+        Ref: EC2InstanceProfile
+      AssociatePublicIpAddress: true
+      UserData:
+        Fn::Base64: 
+          Fn::Join: 
+            - ""
+            - - "#!/bin/bash\n"
+              - "echo ECS_CLUSTER="
+              - Ref: DemoCluster
+              - " >> /etc/ecs/ecs.config"
+      SecurityGroups: 
+        - Fn::ImportValue: DemoSecurityGroupEC2
+  EC2Role: 
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Statement: 
+          - Effect: Allow
+            Principal: 
+              Service: 
+                - ec2.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+  EC2InstanceProfile: 
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      Path: /
+      Roles: 
+        - Ref: EC2Role
+  ECSServiceRole: 
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Statement: 
+          - Effect: Allow
+            Principal: 
+              Service: 
+                - ecs.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns: 
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceRole
+  DemoALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - Fn::ImportValue: DemoPublicSubnet1a
+        - Fn::ImportValue: DemoPublicSubnet1c
+      LoadBalancerAttributes:
+        - Key: idle_timeout.timeout_seconds
+          Value: 15
+      SecurityGroups:
+        - Fn::ImportValue: DemoSecurityGroupELB
+      Tags:
+        - Key: Application
+          Value: 
+            Ref: AWS::StackName
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 5
+      UnhealthyThresholdCount: 2
+      HealthCheckTimeoutSeconds: 5
+      HealthCheckIntervalSeconds: 30
+      Matcher:
+        HttpCode: 200
+      Port: 80
+      Protocol: HTTP
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 20
+      VpcId:
+        Fn::ImportValue: DemoVPC
+      Tags:
+        - Key: Application
+          Value: 
+            Ref: AWS::StackName
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn:
+            Ref: TargetGroup
+      LoadBalancerArn:
+        Ref: DemoALB
+      Protocol: HTTP
+      Port: 80
+Outputs:
+  Endpoint:
+    Value:
+      Fn::GetAtt:
+        - DemoALB
+        - DNSName
+  ECSServiceRole:
+    Value:
+      Ref: ECSServiceRole
