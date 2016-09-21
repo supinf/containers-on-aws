@@ -16,7 +16,35 @@ Parameters:
 Resources:
   DemoCluster:
     Type: AWS::ECS::Cluster
-  ECSAutoScalingGroup: 
+  DemoTask:
+    Type: AWS::ECS::TaskDefinition
+    Properties: 
+      ContainerDefinitions: 
+        - Name: web
+          Image: dockercloud/hello-world
+          PortMappings: 
+            - ContainerPort: 80
+              HostPort: 0
+          Memory: 128
+          Essential: true
+  DemoService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - Listener
+    Properties:
+      Role:
+        Ref: ECSServiceRole
+      TaskDefinition:
+        Ref: DemoTask
+      DesiredCount: 1
+      LoadBalancers:
+        - TargetGroupArn:
+            Ref: TargetGroup
+          ContainerPort: 80
+          ContainerName: web
+      Cluster:
+        Ref: DemoCluster
+  ECSAutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties: 
       VPCZoneIdentifier: 
@@ -135,12 +163,55 @@ Resources:
         Ref: DemoALB
       Protocol: HTTP
       Port: 80
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Origins:
+          - Id: WebALB
+            DomainName:
+              Fn::GetAtt:
+                - DemoALB
+                - DNSName
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+        DefaultCacheBehavior:
+          TargetOriginId: WebALB
+          ViewerProtocolPolicy: allow-all
+          AllowedMethods:
+            - HEAD
+            - GET
+            - POST
+            - PUT
+            - PATCH
+            - DELETE
+            - OPTIONS
+          DefaultTTL: 1
+          MaxTTL: 1
+          MinTTL: 0
+          ForwardedValues:
+            Cookies:
+              Forward: none
+            QueryString: false
+          Compress: true
+        PriceClass: PriceClass_200
+        Comment:
+          Ref: AWS::StackName
 Outputs:
-  Endpoint:
+  CloudFront:
     Value:
       Fn::GetAtt:
-        - DemoALB
-        - DNSName
-  ECSServiceRole:
+        - CloudFrontDistribution
+        - DomainName
+  ECSCluster:
     Value:
-      Ref: ECSServiceRole
+      Ref: DemoCluster
+  ECSTask:
+    Value:
+      Ref: DemoTask
+  ECSService:
+    Value:
+      Fn::GetAtt:
+        - DemoService
+        - Name 

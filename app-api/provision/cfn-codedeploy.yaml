@@ -150,6 +150,13 @@ Resources:
                       - ":"
                       - Ref: AWS::AccountId
                       - ":deploymentconfig:*"
+              - Effect: Allow
+                Action:
+                  - ecs:ListTaskDefinitions
+                  - ecs:RegisterTaskDefinition
+                  - ecs:UpdateService
+                Resource:
+                  - "*"
   CodeDeployExecutorKey:
     Type: AWS::IAM::AccessKey
     Properties:
